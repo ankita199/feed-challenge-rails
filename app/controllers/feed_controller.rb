@@ -1,45 +1,39 @@
 require "rest_client"
 class FeedController < ApplicationController
+  include RestHelper
   def index
     begin
-      activities_list = get_rest_call(ENV["API_ENDPOINT"]+"/activities")
-      activities_list = JSON.parse(activities_list)
-      shared,posted = [],[]
-      final_result = []
-      activities_list.map { |activity|
-=begin    
-        if(activity["verb"] === "posted")
-          posted.push activity
-        elsif(activity["verb"] === "shared")
-          shared.push activity
-        end
-=end 
-        final_result.push({"verb": activity['verb'],"actor": activity["actor"]})
-      }
-      render json: final_result
+      activities_list = rest_get(get_url("list_activities"))
+      if(activities_list)
+        ids_hash , obj_hash, final_result = {posted: [],shared: []} , {} , []
+        activities_list.select{ |activity|
+          id = get_id(activity)
+          ids_hash[activity["verb"].to_sym].push(id)
+        }
+        obj_hash["shared"] = rest_get(get_url("list_shares")+"?ids=#{ids_hash[:shared].join(",")}")
+        obj_hash["posted"] = rest_get(get_url("list_posts")+"?ids=#{ids_hash[:posted].join(",")}")
+        activities_list.select{ |activity|
+          tmp_hash = {verb: activity["verb"],actor: activity["actor"]}
+          id = get_id(activity)
+          obj_list = []
+          obj = obj_hash[activity["verb"]].select{ |obj| obj["id"] == id }.try(:first)
+          if(obj)
+            obj["content"] ?  tmp_hash[:content] = obj["content"] : tmp_hash[:url] = obj["url"]
+            tmp_hash[:description] = activity["actor"] + " " + activity["verb"] + " " + (obj["content"] || obj["url"])
+          end
+          final_result.push(tmp_hash)
+        }
+        render json: final_result
+      end
     rescue Exception => e
-      render json: {}
+      render json: {"error": e.message}
     end
   end
   
   private
   
-  def get_rest_call(url)
-    begin
-      RestClient.get(url) { |response, request, result, &block|
-    case response.code
-    when 200
-      response
-    else
-      response.return!(&block)
-    end
-    }
-    rescue RestClient::Unauthorized, RestClient::Forbidden => err
-      puts 'Access denied'
-      return err.response
-    rescue RestClient::ImATeapot => err
-      puts 'The server is a teapot! # RFC 2324'
-      return err.response
-    end
+  def get_id(obj)
+    object_ary = obj["object"].split(":")
+    return object_ary[1].to_i
   end
 end
